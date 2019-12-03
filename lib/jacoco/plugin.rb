@@ -33,6 +33,7 @@ module Danger
       @minimum_package_coverage_map = {} unless minimum_package_coverage_map
       @minimum_class_coverage_map = {} unless minimum_class_coverage_map
       @files_extension = ['.kt', '.java'] unless files_extension
+      @git_change_type = %w[New Edit]
     end
 
     # Parses the xml output of jacoco to Ruby model classes
@@ -63,24 +64,48 @@ module Danger
     #
     def report(path, report_url = '', delimiter = %r{\/java\/|\/kotlin\/})
       setup
-      classes = classes(delimiter)
 
-      parser = Jacoco::SAXParser.new(classes)
-      Nokogiri::XML::SAX::Parser.new(parser).parse(File.open(path))
-
+      # report total coverage
       total_covered = total_coverage(path)
-
       report_markdown = "### JaCoCO Code Coverage #{total_covered[:covered]}% #{total_covered[:status]}\n"
-      class_coverage_above_minimum, report_markdown = markdown_class(parser, report_markdown, report_url)
-      markdown(report_markdown)
 
-      report_fails(class_coverage_above_minimum, total_covered)
+      # parse and report class coverage
+      classes_coverage_above_minimum, report_classes_markdown = report_changed_class(path, report_url, delimiter)
+      report_markdown += report_classes_markdown
+
+      markdown(report_markdown)
+      puts report_markdown
+
+      report_fails(classes_coverage_above_minimum, total_covered)
+    end
+
+    # parse and report class coverage distinguish with git changed files type
+    def report_changed_class(path, report_url, delimiter)
+      classes_coverage_above_minimum = true
+      report_classes_markdown = ''
+      report_classes = ''.dup
+      @git_change_type.each do |change_type|
+        classes = classes(delimiter, change_type)
+
+        parser = Jacoco::SAXParser.new(classes)
+        Nokogiri::XML::SAX::Parser.new(parser).parse(File.open(path))
+
+        class_coverage_above_minimum, report_classes = markdown_class(parser, report_classes, report_url, change_type)
+        classes_coverage_above_minimum &&= class_coverage_above_minimum
+      end
+
+      unless report_classes.empty?
+        report_classes_markdown += "| Type | Class | Covered | Meta | Status |\n"
+        report_classes_markdown += "|:---|:---|:---:|:---:|:---:|\n"
+        report_classes_markdown += report_classes
+      end
+      [classes_coverage_above_minimum, report_classes_markdown]
     end
 
     # Select modified and added files in this PR
-    def classes(delimiter)
+    def classes(delimiter, change_type)
       git = @dangerfile.git
-      affected_files = git.modified_files + git.added_files
+      affected_files = change_type == @git_change_type[0] ? git.added_files : git.modified_files
       affected_files.select { |file| files_extension.reduce(false) { |state, el| state || file.end_with?(el) } }
                     .map { |file| file.split('.').first.split(delimiter)[1] }
     end
@@ -166,26 +191,18 @@ module Danger
     end
     # rubocop:enable Style/SignalException
 
-    def markdown_class(parser, report_markdown, report_url)
+    def markdown_class(parser, report_classes, report_url, change_type)
       class_coverage_above_minimum = true
-      report_rows = ''.dup
       parser.classes.each do |jacoco_class| # Check metrics for each classes
         rp = report_class(jacoco_class)
         rl = report_link(jacoco_class.name, report_url)
-        ln = "| #{rl} | #{rp[:covered]}% | #{rp[:required_coverage_percentage]}% | #{rp[:status]} |\n"
-        report_rows << ln
+        ln = "| #{change_type} | #{rl} | #{rp[:covered]}% | #{rp[:required_coverage_percentage]}% | #{rp[:status]} |\n"
+        report_classes << ln
 
         class_coverage_above_minimum &&= rp[:covered] >= rp[:required_coverage_percentage]
       end
 
-      # if no jacoco class changed,do not add markdown table header
-      unless report_rows.empty?
-        report_markdown += "| Class | Covered | Meta | Status |\n"
-        report_markdown += "|:---|:---:|:---:|:---:|\n"
-        report_markdown += report_rows
-      end
-
-      [class_coverage_above_minimum, report_markdown]
+      [class_coverage_above_minimum, report_classes]
     end
 
     def report_link(class_name, report_url)
