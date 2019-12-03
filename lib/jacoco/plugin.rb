@@ -74,7 +74,6 @@ module Danger
       report_markdown += report_classes_markdown
 
       markdown(report_markdown)
-      puts report_markdown
 
       report_fails(classes_coverage_above_minimum, total_covered)
     end
