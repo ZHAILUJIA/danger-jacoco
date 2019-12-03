@@ -71,8 +71,6 @@ module Danger
       total_covered = total_coverage(path)
 
       report_markdown = "### JaCoCO Code Coverage #{total_covered[:covered]}% #{total_covered[:status]}\n"
-      report_markdown += "| Class | Covered | Meta | Status |\n"
-      report_markdown += "|:---|:---:|:---:|:---:|\n"
       class_coverage_above_minimum = markdown_class(parser, report_markdown, report_url)
       markdown(report_markdown)
 
@@ -170,15 +168,23 @@ module Danger
 
     def markdown_class(parser, report_markdown, report_url)
       class_coverage_above_minimum = true
+      report_rows = ""
       parser.classes.each do |jacoco_class| # Check metrics for each classes
         rp = report_class(jacoco_class)
         rl = report_link(jacoco_class.name, report_url)
         ln = "| #{rl} | #{rp[:covered]}% | #{rp[:required_coverage_percentage]}% | #{rp[:status]} |\n"
-        report_markdown << ln
+        report_rows << ln
 
         class_coverage_above_minimum &&= rp[:covered] >= rp[:required_coverage_percentage]
       end
 
+      # if no jacoco class changed,do not add markdown table header
+      unless report_rows.empty?
+        report_markdown += "| Class | Covered | Meta | Status |\n"
+        report_markdown += "|:---|:---:|:---:|:---:|\n"
+        report_markdown += report_rows
+      end
+      
       class_coverage_above_minimum
     end
 
